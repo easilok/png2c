@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <png.h>
+#include <string.h>
 
 #define RGB888toRGB565(r, g, b) ((r >> 3) << 11)| \
 	((g >> 2) << 5)| ((b >> 3) << 0)
@@ -34,6 +35,32 @@ png_infop pInfo;
 int numPasses;
 png_bytep *rows;
 int generate5A1 = 0;
+int generateRGBA565 = 0;
+
+int toRGBA565 (unsigned char red, unsigned char green, unsigned char blue, unsigned char alpha, unsigned char * pixelExport) {
+	unsigned char redConverted = 0;
+	unsigned char greenConverted = 0;
+	unsigned char blueConverted = 0;
+
+	redConverted = red * 31 / 255;
+	greenConverted = green * 66 / 255;
+	blueConverted = blue * 31 / 255;
+
+	pixelExport[0] = 255 - alpha;
+#ifdef USE_STD_RGB
+	pixelExport[1] = (red << (8 - 5)) & 0b11111000;
+	pixelExport[1] |= (green >> (6 - (8 - 5))) & 0b111;
+
+	pixelExport[2] = ((green & 0b111) << (8-3)) & 0b11100000;
+	pixelExport[2] |= blue & 0b11111;
+#else
+	pixelExport[1] = (blue << (8 - 5)) & 0b11111000;
+	pixelExport[1] |= (green >> (6 - (8 - 5))) & 0b111;
+
+	pixelExport[2] = ((green & 0b111) << (8-3)) & 0b11100000;
+	pixelExport[2] |= red & 0b11111;
+#endif
+}
 
 int main(int argc, char* argv[]) {
     // check parameter
@@ -54,9 +81,13 @@ int main(int argc, char* argv[]) {
     }
     
     // check if RGB5A1
-    if (argc == 3 && 0 == strcmp(argv[2], "-a"))
-        generate5A1 = 1;
-
+		if (argc == 3) {
+			if (0 == strcmp(argv[2], "-a")) {
+					generate5A1 = 1;
+			} else if (0 == strcmp(argv[2], "-b")) {
+					generateRGBA565 = 1;
+			}
+		}
     // read the header
     printf("Reading header...\n");
     if (fread(header, 1, 8, file) <= 0) {
@@ -165,12 +196,22 @@ int main(int argc, char* argv[]) {
         png_byte* row = rows[y];
         for (x=0; x<width; x++) {
             png_byte* pixel = &(row[x*4]);
-            unsigned short convPixel = generate5A1 ? RGB8888toRGB5A1(pixel[0], pixel[1], pixel[2], pixel[3]) : RGB888toRGB565(pixel[0], pixel[1], pixel[2]);
-            // the last pixel shouldn't have a comma
-            if (y == height-1 && x == width-1)
-                fprintf(outputSource, "0x%x\n};\n", convPixel);
-            else
-                fprintf(outputSource, "0x%x, ", convPixel);
+						if (generateRGBA565) {
+							unsigned char convPixel[3] = {0};
+							toRGBA565(pixel[0], pixel[1], pixel[2], pixel[3], convPixel);
+							// the last pixel shouldn't have a comma
+							if (y == height-1 && x == width-1)
+									fprintf(outputSource, "0x%x, 0x%x, 0x%x\n};\n", convPixel[0], convPixel[1], convPixel[2]);
+							else
+									fprintf(outputSource, "0x%x, 0x%x, 0x%x, ", convPixel[0], convPixel[1], convPixel[2]);
+						} else {
+							unsigned short convPixel = generate5A1 ? RGB8888toRGB5A1(pixel[0], pixel[1], pixel[2], pixel[3]) : RGB888toRGB565(pixel[0], pixel[1], pixel[2]);
+							// the last pixel shouldn't have a comma
+							if (y == height-1 && x == width-1)
+									fprintf(outputSource, "0x%x\n};\n", convPixel);
+							else
+									fprintf(outputSource, "0x%x, ", convPixel);
+						}
         }
         fprintf(outputSource, "\n");
     }
@@ -178,6 +219,8 @@ int main(int argc, char* argv[]) {
     fclose(outputSource);
     if (generate5A1)
         printf("Output format is RGB5A1.\n");
+    else if (generateRGBA565)
+        printf("Output format is ARGB565.\n");
     else
         printf("Output format is RGB565.\n");
     printf("Done! Generated %s.h and %s.c.\n", imageName, imageName);
